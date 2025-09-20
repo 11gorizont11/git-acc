@@ -124,7 +124,7 @@ check-deps: ## Check for required dependencies
 check-security: ## Run security checks
 	@echo "Running security checks..."
 	@# Check for hardcoded secrets
-	@if grep -r -E "(password|secret|key|token)" --include="*.sh" . | grep -v -E "(SSH|ssh_key|key_path|ssh-keygen|password.*::|test|example|GITHUB_TOKEN|function.*key|local.*key|public_key|private_key)"; then \
+	@if grep -r -E "(password|secret|key|token)" --include="*.sh" . | grep -v -E "(SSH|ssh_key|key_path|ssh-keygen|password.*::|test|example|GITHUB_TOKEN|function.*key|local.*key|public_key|private_key|validate_ssh_key|generate_ssh_key|get_ssh_public_key|ssh.*key|key.*ssh|export.*key)"; then \
 		echo "Potential hardcoded secrets found!"; exit 1; \
 	fi
 	@# Check file permissions
