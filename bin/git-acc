@@ -288,8 +288,14 @@ cmd_add() {
                 shift 2
                 ;;
             --ssh)
-                ssh_key="$2"
-                shift 2
+                if [[ $# -lt 2 || "$2" == --* ]]; then
+                    # --ssh provided without path, prompt to generate
+                    ssh_key="generate"
+                    shift 1
+                else
+                    ssh_key="$2"
+                    shift 2
+                fi
                 ;;
             *)
                 log_error "Unknown option for add: $1"
@@ -317,7 +323,7 @@ cmd_add() {
         if [[ -z "${ssh_key}" ]]; then
             read -rp "Generate a new SSH key for this account? (y/N): " generate_key
             if [[ "${generate_key}" =~ ^[Yy]$ ]]; then
-                ssh_key="${HOME}/.ssh/id_ed25519_${name,,}"
+                ssh_key="${HOME}/.ssh/id_ed25519_$(echo "${name}" | tr '[:upper:]' '[:lower:]')"
                 printf "Will generate SSH key at: %s\n" "${ssh_key}"
 
                 if [[ ${DRY_RUN} -eq 0 ]]; then
@@ -335,6 +341,110 @@ cmd_add() {
     if [[ -z "${name}" || -z "${email}" ]]; then
         log_error "Account name and email are required"
         return 2
+    fi
+
+    # Handle SSH key generation in non-interactive mode
+    if [[ ${interactive} -eq 0 ]]; then
+        if [[ "${ssh_key}" == "generate" ]]; then
+            # --ssh flag provided without path, generate SSH key
+            ssh_key="${HOME}/.ssh/id_ed25519_$(echo "${name}" | tr '[:upper:]' '[:lower:]')"
+            log_info "Generating SSH key at: ${ssh_key}"
+
+            if [[ ${DRY_RUN} -eq 0 ]]; then
+                if [[ -f "${ssh_key}" ]]; then
+                    read -rp "SSH key ${ssh_key} already exists. Overwrite? (y/N): " overwrite
+                    if [[ ! "${overwrite}" =~ ^[Yy]$ ]]; then
+                        log_info "Using existing SSH key: ${ssh_key}"
+                    else
+                        ssh-keygen -t ed25519 -C "${email}" -f "${ssh_key}" -N "" || {
+                            log_error "Failed to generate SSH key"
+                            return 5
+                        }
+                        log_success "SSH key generated successfully!"
+                    fi
+                else
+                    ssh-keygen -t ed25519 -C "${email}" -f "${ssh_key}" -N "" || {
+                        log_error "Failed to generate SSH key"
+                        return 5
+                    }
+                    log_success "SSH key generated successfully!"
+                fi
+                log_info "Add the public key to your Git provider:"
+                log_info "  cat ${ssh_key}.pub"
+            else
+                log_info "[DRY-RUN] Would generate SSH key: ssh-keygen -t ed25519 -C ${email} -f ${ssh_key} -N \"\""
+            fi
+        elif [[ -z "${ssh_key}" ]]; then
+            # No --ssh provided, offer to generate
+            log_warn "No SSH key specified. Without an SSH key, you'll need to use HTTPS authentication."
+            if [[ -t 0 ]]; then  # Only prompt if we have a terminal
+                read -rp "Generate a new SSH key for this account? (y/N): " generate_key
+                if [[ "${generate_key}" =~ ^[Yy]$ ]]; then
+                    ssh_key="${HOME}/.ssh/id_ed25519_$(echo "${name}" | tr '[:upper:]' '[:lower:]')"
+                    log_info "Generating SSH key at: ${ssh_key}"
+
+                    if [[ ${DRY_RUN} -eq 0 ]]; then
+                        if [[ -f "${ssh_key}" ]]; then
+                            read -rp "SSH key ${ssh_key} already exists. Overwrite? (y/N): " overwrite
+                            if [[ ! "${overwrite}" =~ ^[Yy]$ ]]; then
+                                log_info "Using existing SSH key: ${ssh_key}"
+                            else
+                                ssh-keygen -t ed25519 -C "${email}" -f "${ssh_key}" -N "" || {
+                                    log_error "Failed to generate SSH key"
+                                    return 5
+                                }
+                                log_success "SSH key generated successfully!"
+                            fi
+                        else
+                            ssh-keygen -t ed25519 -C "${email}" -f "${ssh_key}" -N "" || {
+                                log_error "Failed to generate SSH key"
+                                return 5
+                            }
+                            log_success "SSH key generated successfully!"
+                        fi
+                        log_info "Add the public key to your Git provider:"
+                        log_info "  cat ${ssh_key}.pub"
+                    else
+                        log_info "[DRY-RUN] Would generate SSH key: ssh-keygen -t ed25519 -C ${email} -f ${ssh_key} -N \"\""
+                    fi
+                fi
+            fi
+        fi
+    fi
+
+    # Also handle SSH key generation prompt for non-interactive mode (when no SSH key provided)
+    if [[ ${interactive} -eq 0 && -z "${ssh_key}" && -t 0 ]]; then
+        log_warn "No SSH key specified. Without an SSH key, you'll need to use HTTPS authentication."
+        read -rp "Generate a new SSH key for this account? (y/N): " generate_key
+        if [[ "${generate_key}" =~ ^[Yy]$ ]]; then
+            ssh_key="${HOME}/.ssh/id_ed25519_$(echo "${name}" | tr '[:upper:]' '[:lower:]')"
+            log_info "Generating SSH key at: ${ssh_key}"
+
+            if [[ ${DRY_RUN} -eq 0 ]]; then
+                if [[ -f "${ssh_key}" ]]; then
+                    read -rp "SSH key ${ssh_key} already exists. Overwrite? (y/N): " overwrite
+                    if [[ ! "${overwrite}" =~ ^[Yy]$ ]]; then
+                        log_info "Using existing SSH key: ${ssh_key}"
+                    else
+                        ssh-keygen -t ed25519 -C "${email}" -f "${ssh_key}" -N "" || {
+                            log_error "Failed to generate SSH key"
+                            return 5
+                        }
+                        log_success "SSH key generated successfully!"
+                    fi
+                else
+                    ssh-keygen -t ed25519 -C "${email}" -f "${ssh_key}" -N "" || {
+                        log_error "Failed to generate SSH key"
+                        return 5
+                    }
+                    log_success "SSH key generated successfully!"
+                fi
+                log_info "Add the public key to your Git provider:"
+                log_info "  cat ${ssh_key}.pub"
+            else
+                log_info "[DRY-RUN] Would generate SSH key: ssh-keygen -t ed25519 -C ${email} -f ${ssh_key} -N \"\""
+            fi
+        fi
     fi
 
     # Validate account name format
@@ -355,10 +465,15 @@ cmd_add() {
         return 1
     fi
 
-    # Validate SSH key if provided
+    # Validate SSH key if provided (skip validation in dry-run for generated keys)
     if [[ -n "${ssh_key}" && ! -f "${ssh_key}" ]]; then
-        log_error "SSH key file not found: ${ssh_key}"
-        return 5
+        if [[ ${DRY_RUN} -eq 1 && "${ssh_key}" == *"id_ed25519_"* ]]; then
+            # In dry-run mode, generated keys won't exist yet - that's OK
+            log_verbose "Dry-run mode: SSH key validation skipped for generated key"
+        else
+            log_error "SSH key file not found: ${ssh_key}"
+            return 5
+        fi
     fi
 
     # Add account to accounts file
