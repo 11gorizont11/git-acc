@@ -1,0 +1,675 @@
+#!/usr/bin/env bash
+set -euo pipefail
+IFS=$'\n\t'
+
+VERSION="0.1.0"
+PROGNAME="$(basename "$0")"
+
+# Source core functions if available
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LIB_DIR="$(dirname "${SCRIPT_DIR}")/lib"
+if [[ -f "${LIB_DIR}/git-acc-core.sh" ]]; then
+    # shellcheck source=../lib/git-acc-core.sh
+    source "${LIB_DIR}/git-acc-core.sh"
+fi
+
+print_help() {
+    cat <<EOF
+${PROGNAME} - Manage multiple Git identities
+
+Usage:
+  ${PROGNAME} [global options] <command> [options]
+
+Global options:
+  -h, --help        Show this help message
+  -V, --version     Print version and exit
+  -v, --verbose     Enable verbose output
+      --dry-run     Show what would be done without executing
+      --json        Output in JSON format (where applicable)
+
+Commands:
+  list              List all configured accounts
+  add               Add a new account (interactive or with flags)
+  remove <name>     Remove an account by name
+  switch <name>     Switch to an account (updates git config)
+  status            Show current git identity
+  import <file>     Import accounts from JSON file
+  export [file]     Export accounts to JSON (stdout if no file)
+  config            Show or modify configuration
+  install           Install git-acc to system PATH
+  uninstall         Remove git-acc from system
+
+Examples:
+  ${PROGNAME} add --name "Work" --email me@company.com --ssh ~/.ssh/id_ed25519_work
+  ${PROGNAME} switch Work
+  ${PROGNAME} list
+  ${PROGNAME} status
+  ${PROGNAME} export accounts.json
+
+Exit codes:
+  0   Success
+  1   General error
+  2   Invalid usage/arguments
+  3   Missing dependency
+  4   Account not found
+  5   File operation error
+
+EOF
+}
+
+print_version() {
+    printf "%s %s\n" "${PROGNAME}" "${VERSION}"
+}
+
+# Global state variables
+DRY_RUN=0
+VERBOSE=0
+JSON_OUTPUT=0
+
+# Color codes for logging (if not already defined)
+if [[ -z "${RED:-}" ]]; then
+    readonly RED='\033[0;31m'
+    readonly YELLOW='\033[0;33m'
+    readonly BLUE='\033[0;34m'
+    readonly GREEN='\033[0;32m'
+    readonly GRAY='\033[0;90m'
+    readonly NC='\033[0m' # No Color
+fi
+
+# Check if colors should be disabled
+should_use_colors() {
+    # Disable colors if NO_COLOR env var is set, or output is not a terminal
+    [[ -z "${NO_COLOR:-}" && -t 2 ]]
+}
+
+# Logging functions
+log_verbose() {
+    if [[ ${VERBOSE} -eq 1 ]]; then
+        if should_use_colors; then
+            printf "${GRAY}[VERBOSE]${NC} %s\n" "$*" >&2
+        else
+            printf "[VERBOSE] %s\n" "$*" >&2
+        fi
+    fi
+}
+
+log_error() {
+    if should_use_colors; then
+        printf "${RED}[ERROR]${NC} %s\n" "$*" >&2
+    else
+        printf "[ERROR] %s\n" "$*" >&2
+    fi
+}
+
+log_info() {
+    if should_use_colors; then
+        printf "${BLUE}[INFO]${NC} %s\n" "$*"
+    else
+        printf "[INFO] %s\n" "$*"
+    fi
+}
+
+log_warn() {
+    if should_use_colors; then
+        printf "${YELLOW}[WARNING]${NC} %s\n" "$*" >&2
+    else
+        printf "[WARNING] %s\n" "$*" >&2
+    fi
+}
+
+log_success() {
+    if should_use_colors; then
+        printf "${GREEN}[SUCCESS]${NC} %s\n" "$*"
+    else
+        printf "[SUCCESS] %s\n" "$*"
+    fi
+}
+
+# Configuration
+CONFIG_DIR="${XDG_CONFIG_HOME:-${HOME}/.config}/git-acc"
+ACCOUNTS_FILE="${CONFIG_DIR}/accounts.json"
+CONFIG_FILE="${CONFIG_DIR}/config.json"
+
+# Ensure config directory exists
+mkdir -p "${CONFIG_DIR}"
+
+# Initialize accounts file if it doesn't exist
+if [[ ! -f "${ACCOUNTS_FILE}" ]]; then
+    printf '{"accounts": [], "active": null}\n' > "${ACCOUNTS_FILE}"
+fi
+
+# Initialize config file if it doesn't exist
+if [[ ! -f "${CONFIG_FILE}" ]]; then
+    printf '{"backup_gitconfig": true, "ssh_management": true}\n' > "${CONFIG_FILE}"
+fi
+
+# Parse global flags
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -h|--help)
+            print_help
+            exit 0
+            ;;
+        -V|--version)
+            print_version
+            exit 0
+            ;;
+        -v|--verbose)
+            VERBOSE=1
+            shift
+            ;;
+        --dry-run)
+            DRY_RUN=1
+            shift
+            ;;
+        --json)
+            JSON_OUTPUT=1
+            shift
+            ;;
+        --)
+            shift
+            break
+            ;;
+        -*)
+            log_error "Unknown option: $1"
+            printf "Use --help for usage information.\n" >&2
+            exit 2
+            ;;
+        *)
+            break
+            ;;
+    esac
+done
+
+# Require a command
+if [[ $# -lt 1 ]]; then
+    log_error "No command specified"
+    printf "Use --help for usage information.\n" >&2
+    exit 2
+fi
+
+COMMAND=$1
+shift
+
+# Helper function to run commands with dry-run support
+run_command() {
+    if [[ ${DRY_RUN} -eq 1 ]]; then
+        printf "[DRY-RUN] %s\n" "$*"
+    else
+        log_verbose "Executing: $*"
+        "$@"
+    fi
+}
+
+# Check dependencies
+check_dependencies() {
+    local missing=()
+
+    if ! command -v git &> /dev/null; then
+        missing+=("git")
+    fi
+
+    if ! command -v jq &> /dev/null; then
+        missing+=("jq")
+    fi
+
+    if [[ ${#missing[@]} -gt 0 ]]; then
+        log_error "Missing required dependencies: ${missing[*]}"
+        printf "Please install: %s\n" "${missing[*]}" >&2
+        exit 3
+    fi
+}
+
+# Backup git config
+backup_gitconfig() {
+    if [[ -f "${HOME}/.gitconfig" ]]; then
+        local backup_file="${HOME}/.gitconfig.bak.$(date +%Y%m%d_%H%M%S)"
+        log_verbose "Backing up .gitconfig to ${backup_file}"
+        if [[ ${DRY_RUN} -eq 0 ]]; then
+            cp "${HOME}/.gitconfig" "${backup_file}"
+        else
+            printf "[DRY-RUN] cp %s %s\n" "${HOME}/.gitconfig" "${backup_file}"
+        fi
+    fi
+}
+
+# Core command implementations
+cmd_list() {
+    check_dependencies
+
+    if [[ ${JSON_OUTPUT} -eq 1 ]]; then
+        cat "${ACCOUNTS_FILE}"
+        return 0
+    fi
+
+    local accounts_count
+    accounts_count=$(jq '.accounts | length' "${ACCOUNTS_FILE}")
+
+    if [[ ${accounts_count} -eq 0 ]]; then
+        printf "No accounts configured.\n"
+        printf "Use '%s add' to add your first account.\n" "${PROGNAME}"
+        return 0
+    fi
+
+    local active_account
+    active_account=$(jq -r '.active // "none"' "${ACCOUNTS_FILE}")
+
+    printf "Configured accounts:\n\n"
+    jq -r '.accounts[] | "\(.name)\t\(.email)\t\(.ssh_key // "no SSH key")"' "${ACCOUNTS_FILE}" | \
+    while IFS=$'\t' read -r name email ssh; do
+        local marker=""
+        if [[ "${name}" == "${active_account}" ]]; then
+            marker=" *"
+        fi
+        printf "  %-20s %-30s %s%s\n" "${name}" "${email}" "${ssh}" "${marker}"
+    done
+
+    if [[ "${active_account}" != "none" ]]; then
+        printf "\n* Currently active account\n"
+    fi
+}
+
+cmd_add() {
+    check_dependencies
+
+    local name="" email="" ssh_key="" interactive=1
+
+    # Parse add-specific flags
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --name)
+                name="$2"
+                interactive=0
+                shift 2
+                ;;
+            --email)
+                email="$2"
+                interactive=0
+                shift 2
+                ;;
+            --ssh)
+                ssh_key="$2"
+                shift 2
+                ;;
+            *)
+                log_error "Unknown option for add: $1"
+                return 2
+                ;;
+        esac
+    done
+
+    # Interactive mode if no flags provided
+    if [[ ${interactive} -eq 1 ]]; then
+        # Check if stdin is a terminal for interactive mode
+        if [[ ! -t 0 ]]; then
+            log_error "Account name and email are required"
+            printf "Usage: %s add --name <name> --email <email> [--ssh <path>]\n" "${PROGNAME}" >&2
+            return 2
+        fi
+
+        printf "Adding a new Git account...\n\n"
+
+        read -rp "Account name: " name
+        read -rp "Email address: " email
+        read -rp "SSH key path (optional, press Enter to skip): " ssh_key
+
+        # Offer to generate SSH key
+        if [[ -z "${ssh_key}" ]]; then
+            read -rp "Generate a new SSH key for this account? (y/N): " generate_key
+            if [[ "${generate_key}" =~ ^[Yy]$ ]]; then
+                ssh_key="${HOME}/.ssh/id_ed25519_${name,,}"
+                printf "Will generate SSH key at: %s\n" "${ssh_key}"
+
+                if [[ ${DRY_RUN} -eq 0 ]]; then
+                    ssh-keygen -t ed25519 -C "${email}" -f "${ssh_key}" -N ""
+                    printf "SSH key generated. Don't forget to add the public key to your Git provider:\n"
+                    printf "  cat %s.pub\n" "${ssh_key}"
+                else
+                    printf "[DRY-RUN] ssh-keygen -t ed25519 -C %s -f %s -N \"\"\n" "${email}" "${ssh_key}"
+                fi
+            fi
+        fi
+    fi
+
+    # Validate required fields
+    if [[ -z "${name}" || -z "${email}" ]]; then
+        log_error "Account name and email are required"
+        return 2
+    fi
+
+    # Validate account name format
+    if ! validate_account_name "${name}"; then
+        log_error "Invalid account name. Use only letters, numbers, hyphens, and underscores."
+        return 2
+    fi
+
+    # Validate email format
+    if [[ ! "${email}" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$ ]]; then
+        log_error "Invalid email format: ${email}"
+        return 2
+    fi
+
+    # Check if account already exists
+    if jq -e --arg name "${name}" '.accounts[] | select(.name == $name)' "${ACCOUNTS_FILE}" > /dev/null; then
+        log_error "Account '${name}' already exists"
+        return 1
+    fi
+
+    # Validate SSH key if provided
+    if [[ -n "${ssh_key}" && ! -f "${ssh_key}" ]]; then
+        log_error "SSH key file not found: ${ssh_key}"
+        return 5
+    fi
+
+    # Add account to accounts file
+    local new_account
+    new_account=$(jq -n --arg name "${name}" --arg email "${email}" --arg ssh "${ssh_key}" \
+        '{name: $name, email: $email, ssh_key: (if $ssh == "" then null else $ssh end)}')
+
+    if [[ ${DRY_RUN} -eq 0 ]]; then
+        local temp_file
+        temp_file=$(mktemp)
+        jq --argjson account "${new_account}" '.accounts += [$account]' "${ACCOUNTS_FILE}" > "${temp_file}"
+        mv "${temp_file}" "${ACCOUNTS_FILE}"
+    else
+        printf "[DRY-RUN] Would add account: %s\n" "${new_account}"
+    fi
+
+    log_info "Account '${name}' added successfully"
+    printf "Use '%s switch %s' to activate this account.\n" "${PROGNAME}" "${name}"
+}
+
+cmd_remove() {
+    check_dependencies
+
+    if [[ $# -lt 1 ]]; then
+        log_error "Account name required"
+        printf "Usage: %s remove <account_name>\n" "${PROGNAME}" >&2
+        return 2
+    fi
+
+    local name="$1"
+
+    # Check if account exists
+    if ! jq -e --arg name "${name}" '.accounts[] | select(.name == $name)' "${ACCOUNTS_FILE}" > /dev/null; then
+        log_error "Account '${name}' not found"
+        return 4
+    fi
+
+    # Confirmation in interactive mode
+    if [[ ${DRY_RUN} -eq 0 && -t 0 ]]; then
+        read -rp "Are you sure you want to remove account '${name}'? (y/N): " confirm
+        if [[ ! "${confirm}" =~ ^[Yy]$ ]]; then
+            printf "Cancelled.\n"
+            return 0
+        fi
+    fi
+
+    # Remove account
+    if [[ ${DRY_RUN} -eq 0 ]]; then
+        local temp_file
+        temp_file=$(mktemp)
+        jq --arg name "${name}" '.accounts = (.accounts | map(select(.name != $name))) | if .active == $name then .active = null else . end' "${ACCOUNTS_FILE}" > "${temp_file}"
+        mv "${temp_file}" "${ACCOUNTS_FILE}"
+    else
+        printf "[DRY-RUN] Would remove account: %s\n" "${name}"
+    fi
+
+    log_info "Account '${name}' removed successfully"
+}
+
+cmd_switch() {
+    check_dependencies
+
+    if [[ $# -lt 1 ]]; then
+        log_error "Account name required"
+        printf "Usage: %s switch <account_name>\n" "${PROGNAME}" >&2
+        return 2
+    fi
+
+    local name="$1"
+
+    # Get account details
+    local account_data
+    account_data=$(jq --arg name "${name}" '.accounts[] | select(.name == $name)' "${ACCOUNTS_FILE}")
+
+    if [[ -z "${account_data}" ]]; then
+        log_error "Account '${name}' not found"
+        return 4
+    fi
+
+    local email ssh_key
+    email=$(printf "%s" "${account_data}" | jq -r '.email')
+    ssh_key=$(printf "%s" "${account_data}" | jq -r '.ssh_key // empty')
+
+    # Check if already active
+    local current_active
+    current_active=$(jq -r '.active // "none"' "${ACCOUNTS_FILE}")
+    if [[ "${current_active}" == "${name}" ]]; then
+        log_info "Account '${name}' is already active"
+        return 0
+    fi
+
+    # Backup current git config
+    backup_gitconfig
+
+    # Set git config
+    run_command git config --global user.name "${name}"
+    run_command git config --global user.email "${email}"
+
+    # Handle SSH key if specified
+    if [[ -n "${ssh_key}" ]]; then
+        log_verbose "Setting up SSH key: ${ssh_key}"
+        # Note: SSH key management could be expanded here
+        # For now, we just mention it in the output
+    fi
+
+    # Update active account
+    if [[ ${DRY_RUN} -eq 0 ]]; then
+        local temp_file
+        temp_file=$(mktemp)
+        jq --arg name "${name}" '.active = $name' "${ACCOUNTS_FILE}" > "${temp_file}"
+        mv "${temp_file}" "${ACCOUNTS_FILE}"
+    else
+        printf "[DRY-RUN] Would set active account to: %s\n" "${name}"
+    fi
+
+    log_info "Switched to account '${name}' <${email}>"
+    if [[ -n "${ssh_key}" ]]; then
+        printf "SSH key: %s\n" "${ssh_key}"
+        printf "Ensure your SSH agent is configured for this key.\n"
+    fi
+}
+
+cmd_status() {
+    check_dependencies
+
+    if [[ ${JSON_OUTPUT} -eq 1 ]]; then
+        local current_name current_email active_account
+        current_name=$(git config --global user.name 2>/dev/null || echo "")
+        current_email=$(git config --global user.email 2>/dev/null || echo "")
+        active_account=$(jq -r '.active // null' "${ACCOUNTS_FILE}")
+
+        jq -n --arg name "${current_name}" --arg email "${current_email}" --arg active "${active_account}" \
+            '{current_git_identity: {name: $name, email: $email}, active_account: $active}'
+        return 0
+    fi
+
+    printf "Current Git identity:\n"
+
+    local current_name current_email
+    current_name=$(git config --global user.name 2>/dev/null || echo "Not set")
+    current_email=$(git config --global user.email 2>/dev/null || echo "Not set")
+
+    printf "  Name:  %s\n" "${current_name}"
+    printf "  Email: %s\n" "${current_email}"
+
+    local active_account
+    active_account=$(jq -r '.active // "none"' "${ACCOUNTS_FILE}")
+
+    printf "\nActive account: %s\n" "${active_account}"
+
+    if [[ "${active_account}" != "none" ]]; then
+        local account_data
+        account_data=$(jq --arg name "${active_account}" '.accounts[] | select(.name == $name)' "${ACCOUNTS_FILE}")
+        if [[ -n "${account_data}" ]]; then
+            local ssh_key
+            ssh_key=$(printf "%s" "${account_data}" | jq -r '.ssh_key // "Not configured"')
+            printf "SSH key: %s\n" "${ssh_key}"
+        fi
+    fi
+}
+
+cmd_import() {
+    check_dependencies
+
+    if [[ $# -lt 1 ]]; then
+        log_error "Import file required"
+        printf "Usage: %s import <file.json>\n" "${PROGNAME}" >&2
+        return 2
+    fi
+
+    local import_file="$1"
+
+    if [[ ! -f "${import_file}" ]]; then
+        log_error "Import file not found: ${import_file}"
+        return 5
+    fi
+
+    # Validate JSON structure
+    if ! jq -e '.accounts' "${import_file}" > /dev/null; then
+        log_error "Invalid import file format (missing 'accounts' array)"
+        return 5
+    fi
+
+    # Backup current accounts
+    if [[ ${DRY_RUN} -eq 0 ]]; then
+        local backup_file="${ACCOUNTS_FILE}.bak.$(date +%Y%m%d_%H%M%S)"
+        cp "${ACCOUNTS_FILE}" "${backup_file}"
+        log_verbose "Backed up current accounts to ${backup_file}"
+    fi
+
+    # Import accounts
+    if [[ ${DRY_RUN} -eq 0 ]]; then
+        cp "${import_file}" "${ACCOUNTS_FILE}"
+    else
+        printf "[DRY-RUN] Would import accounts from: %s\n" "${import_file}"
+    fi
+
+    local imported_count
+    imported_count=$(jq '.accounts | length' "${import_file}")
+    log_info "Imported ${imported_count} accounts from ${import_file}"
+}
+
+cmd_export() {
+    check_dependencies
+
+    local output_file=""
+    if [[ $# -gt 0 ]]; then
+        output_file="$1"
+    fi
+
+    if [[ -n "${output_file}" ]]; then
+        if [[ ${DRY_RUN} -eq 0 ]]; then
+            cp "${ACCOUNTS_FILE}" "${output_file}"
+        else
+            printf "[DRY-RUN] Would export accounts to: %s\n" "${output_file}"
+        fi
+        log_info "Accounts exported to ${output_file}"
+    else
+        cat "${ACCOUNTS_FILE}"
+    fi
+}
+
+cmd_config() {
+    check_dependencies
+
+    if [[ $# -eq 0 ]]; then
+        # Show current config
+        printf "Current configuration:\n"
+        jq -r 'to_entries[] | "  \(.key): \(.value)"' "${CONFIG_FILE}"
+        return 0
+    fi
+
+    # Set configuration (future implementation)
+    log_error "Configuration modification not yet implemented"
+    return 1
+}
+
+cmd_install() {
+    local install_dir="/usr/local/bin"
+    local script_path="$(realpath "${BASH_SOURCE[0]}")"
+    local target_path="${install_dir}/git-acc"
+
+    if [[ ! -w "${install_dir}" ]]; then
+        log_error "Cannot write to ${install_dir} (try with sudo)"
+        return 5
+    fi
+
+    if [[ ${DRY_RUN} -eq 0 ]]; then
+        cp "${script_path}" "${target_path}"
+        chmod +x "${target_path}"
+    else
+        printf "[DRY-RUN] cp %s %s\n" "${script_path}" "${target_path}"
+        printf "[DRY-RUN] chmod +x %s\n" "${target_path}"
+    fi
+
+    log_info "Installed git-acc to ${target_path}"
+}
+
+cmd_uninstall() {
+    local install_path="/usr/local/bin/git-acc"
+
+    if [[ ! -f "${install_path}" ]]; then
+        log_error "git-acc not found in ${install_path}"
+        return 4
+    fi
+
+    if [[ ${DRY_RUN} -eq 0 ]]; then
+        rm "${install_path}"
+    else
+        printf "[DRY-RUN] rm %s\n" "${install_path}"
+    fi
+
+    log_info "Uninstalled git-acc from ${install_path}"
+}
+
+# Command dispatcher
+case "${COMMAND}" in
+    list)
+        cmd_list "$@"
+        ;;
+    add)
+        cmd_add "$@"
+        ;;
+    remove)
+        cmd_remove "$@"
+        ;;
+    switch)
+        cmd_switch "$@"
+        ;;
+    status)
+        cmd_status "$@"
+        ;;
+    import)
+        cmd_import "$@"
+        ;;
+    export)
+        cmd_export "$@"
+        ;;
+    config)
+        cmd_config "$@"
+        ;;
+    install)
+        cmd_install "$@"
+        ;;
+    uninstall)
+        cmd_uninstall "$@"
+        ;;
+    *)
+        log_error "Unknown command: ${COMMAND}"
+        printf "Use --help for available commands.\n" >&2
+        exit 2
+        ;;
+esac
+

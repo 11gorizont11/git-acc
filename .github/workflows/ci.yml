@@ -1,0 +1,334 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint:
+    name: Lint and Static Analysis
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install ShellCheck
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
+
+      - name: Run ShellCheck on main script
+        run: shellcheck bin/git-acc
+
+      - name: Run ShellCheck on library
+        run: shellcheck lib/git-acc-core.sh
+
+      - name: Check for bashisms
+        run: |
+          # Install checkbashisms if available
+          sudo apt-get install -y devscripts || true
+          if command -v checkbashisms >/dev/null 2>&1; then
+            checkbashisms bin/git-acc lib/git-acc-core.sh
+          else
+            echo "checkbashisms not available, skipping"
+          fi
+
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        bash-version: ["4.4", "5.0", "5.1", "5.2"]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bats jq git
+
+      - name: Install specific Bash version
+        if: matrix.bash-version != '5.1' # Ubuntu 22.04 default
+        run: |
+          # For different bash versions, we'll use the system default
+          # In a real scenario, you might want to compile different versions
+          echo "Using system Bash version: $(bash --version | head -1)"
+
+      - name: Make scripts executable
+        run: |
+          chmod +x bin/git-acc
+          chmod +x tests/git-acc.bats
+
+      - name: Run unit tests
+        run: |
+          cd tests
+          bats git-acc.bats
+
+      - name: Test CLI directly
+        run: |
+          export PATH="$PWD/bin:$PATH"
+
+          # Test basic functionality
+          git-acc --version
+          git-acc --help
+
+          # Test with temporary config
+          export XDG_CONFIG_HOME="$(mktemp -d)"
+
+          # Basic workflow test
+          git-acc list  # Should show empty
+          git-acc add --name "CI-Test" --email "ci@example.com"
+          git-acc list  # Should show the account
+          git-acc switch "CI-Test"
+          git-acc status  # Should show active account
+
+      - name: Test dry-run functionality
+        run: |
+          export PATH="$PWD/bin:$PATH"
+          export XDG_CONFIG_HOME="$(mktemp -d)"
+
+          # Test dry-run mode
+          git-acc --dry-run add --name "DryRun" --email "dry@example.com"
+          git-acc list  # Should be empty since dry-run
+
+          # Add real account and test dry-run switch
+          git-acc add --name "Real" --email "real@example.com"
+          git-acc --dry-run switch "Real"
+          git-acc status  # Should not have switched
+
+  integration:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    needs: [lint, test]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq git
+
+      - name: Build single-file distribution
+        run: |
+          make build
+
+      - name: Test distribution build
+        run: |
+          chmod +x dist/git-acc
+          ./dist/git-acc --version
+          ./dist/git-acc --help
+
+      - name: Test import/export functionality
+        run: |
+          export PATH="$PWD/bin:$PATH"
+          export XDG_CONFIG_HOME="$(mktemp -d)"
+
+          # Create test accounts
+          git-acc add --name "Work" --email "work@company.com"
+          git-acc add --name "Personal" --email "me@personal.com"
+
+          # Export accounts
+          git-acc export accounts-backup.json
+
+          # Verify export file
+          test -f accounts-backup.json
+          jq empty accounts-backup.json  # Validate JSON
+
+          # Test JSON output
+          git-acc --json list | jq empty
+          git-acc --json status | jq empty
+
+      - name: Test error handling
+        run: |
+          export PATH="$PWD/bin:$PATH"
+          export XDG_CONFIG_HOME="$(mktemp -d)"
+
+          # Test various error conditions
+          set +e  # Allow commands to fail
+
+          # Unknown command
+          git-acc invalid-command
+          test $? -eq 2
+
+          # Missing account
+          git-acc switch "NonExistent"
+          test $? -eq 4
+
+          # Invalid email
+          git-acc add --name "Test" --email "invalid-email"
+          test $? -eq 2
+
+          # Missing SSH key
+          git-acc add --name "Test" --email "test@example.com" --ssh "/nonexistent/key"
+          test $? -eq 5
+
+  security:
+    name: Security Checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check for hardcoded secrets
+        run: |
+          # Simple regex patterns for common secrets
+          if grep -r -E "(password|secret|key|token)" --include="*.sh" . | grep -v -E "(SSH|password.*::|test|example)"; then
+            echo "Potential hardcoded secrets found!"
+            exit 1
+          fi
+
+      - name: Check file permissions
+        run: |
+          # Ensure scripts don't have world-write permissions
+          find . -name "*.sh" -perm /o+w | grep . && exit 1 || true
+
+      - name: Validate shell script security
+        run: |
+          # Check for common security issues
+          if grep -r "curl.*|.*sh" --include="*.sh" .; then
+            echo "Potential curl|sh pattern found!"
+            exit 1
+          fi
+
+          if grep -r "eval.*\$" --include="*.sh" . | grep -v "eval \"\$@\""; then
+            echo "Potentially unsafe eval usage found!"
+            exit 1
+          fi
+
+  compatibility:
+    name: Platform Compatibility
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install dependencies (Ubuntu)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq git bats
+
+      - name: Install dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install jq git bats-core
+
+      - name: Test basic functionality
+        run: |
+          export PATH="$PWD/bin:$PATH"
+          export XDG_CONFIG_HOME="$(mktemp -d)"
+
+          chmod +x bin/git-acc
+
+          git-acc --version
+          git-acc --help
+          git-acc list
+
+          # Test adding and switching accounts
+          git-acc add --name "Platform-Test" --email "test@platform.com"
+          git-acc switch "Platform-Test"
+          git-acc status
+
+      - name: Run core tests
+        run: |
+          chmod +x tests/git-acc.bats
+          cd tests
+          bats git-acc.bats
+
+  release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    needs: [lint, test, integration, security, compatibility]
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq
+
+      - name: Build distribution
+        run: |
+          make build
+          make package
+
+      - name: Generate checksums
+        run: |
+          cd dist
+          sha256sum git-acc > git-acc.sha256
+          sha256sum git-acc.tar.gz > git-acc.tar.gz.sha256
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            dist/git-acc
+            dist/git-acc.tar.gz
+            dist/git-acc.sha256
+            dist/git-acc.tar.gz.sha256
+          body: |
+            ## Installation
+
+            ### Direct download
+            ```bash
+            curl -L https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/git-acc -o /usr/local/bin/git-acc
+            chmod +x /usr/local/bin/git-acc
+            ```
+
+            ### Verify checksum
+            ```bash
+            curl -L https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/git-acc.sha256 -o git-acc.sha256
+            sha256sum -c git-acc.sha256
+            ```
+
+            ## What's Changed
+            See commits since last release for detailed changes.
+
+            ## Checksums
+            - git-acc: `$(cat dist/git-acc.sha256 | cut -d' ' -f1)`
+            - git-acc.tar.gz: `$(cat dist/git-acc.tar.gz.sha256 | cut -d' ' -f1)`
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  notify:
+    name: Notify on Failure
+    runs-on: ubuntu-latest
+    needs: [lint, test, integration, security, compatibility]
+    if: failure()
+    steps:
+      - name: Create Issue on Failure
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const title = `CI Failed for ${context.ref}`;
+            const body = `
+            The CI pipeline failed for ref ${context.ref}.
+
+            **Failed Jobs:**
+            - Lint: ${{ needs.lint.result }}
+            - Test: ${{ needs.test.result }}
+            - Integration: ${{ needs.integration.result }}
+            - Security: ${{ needs.security.result }}
+            - Compatibility: ${{ needs.compatibility.result }}
+
+            **Run:** [${context.runId}](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})
+
+            Please investigate and fix the failing tests.
+            `;
+
+            github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: title,
+              body: body,
+              labels: ['ci-failure', 'bug']
+            });

@@ -1,0 +1,22 @@
+# ShellCheck configuration for git-acc project
+
+# Disable warnings that are acceptable for this project
+disable=SC2034  # Variable appears unused (sometimes used in sourced files)
+disable=SC2155  # Declare and assign separately (acceptable for simple cases)
+
+# Enable all optional checks
+enable=add-default-case
+enable=avoid-nullary-conditions
+enable=check-unassigned-uppercase
+enable=deprecate-which
+enable=quote-safe-variables
+enable=require-variable-braces
+
+# Set shell dialect
+shell=bash
+
+# External sources (libraries that shellcheck shouldn't follow)
+external-sources=true
+
+# Source path for libraries
+source-path=lib

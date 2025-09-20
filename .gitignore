@@ -1,0 +1,38 @@
+# Build artifacts
+dist/
+*.tar.gz
+*.zip
+
+# Test artifacts
+tests/test_tmp_*
+*.tmp
+*.bak
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Local configuration for testing
+.env.local
+test-config/
+
+# Backup files
+*.backup
+*.bak.*
+
+# Log files
+*.log
+
+# Coverage reports
+coverage/
+
+# Temporary directories
+tmp/
+temp/
