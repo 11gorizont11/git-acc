@@ -498,7 +498,29 @@ EOF
     [ "${status}" -eq 0 ]
 
     run git-acc add --name "Work Account" --email "test@example.com"
-    [ "${status}" -eq 2 ]  # Should fail due to space
+    [ "${status}" -eq 0 ]  # Should succeed - spaces are now allowed
+}
+
+@test "handles account names with spaces" {
+    run git-acc add --name "Test User" --email "test@example.com"
+    [ "${status}" -eq 0 ]
+    [[ "${output}" == *"Account 'Test User' added successfully"* ]]
+
+    # Verify account was created and can be listed
+    run git-acc list
+    [[ "${output}" == *"Test User"* ]]
+    [[ "${output}" == *"test@example.com"* ]]
+
+    # Verify account can be switched to
+    run git-acc switch "Test User"
+    [ "${status}" -eq 0 ]
+    [[ "${output}" == *"Switched to account 'Test User'"* ]]
+
+    # Verify git config was updated
+    name=$(git config --global user.name)
+    email=$(git config --global user.email)
+    [ "${name}" = "Test User" ]
+    [ "${email}" = "test@example.com" ]
 }
 
 @test "preserves SSH key information correctly" {

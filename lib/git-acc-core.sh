@@ -10,8 +10,8 @@ validate_email() {
 
 validate_account_name() {
     local name="$1"
-    # Account names should be non-empty and contain only safe characters
-    [[ -n "${name}" && "${name}" =~ ^[A-Za-z0-9_-]+$ ]]
+    # Account names should be non-empty and contain only safe characters (including spaces)
+    [[ -n "${name}" && "${name}" =~ ^[A-Za-z0-9_[:space:]-]+$ ]]
 }
 
 validate_ssh_key() {
