@@ -247,6 +247,179 @@ jobs:
           cd tests
           bats git-acc.bats
 
+  auto-release:
+    name: Auto Release on Main
+    runs-on: ubuntu-latest
+    needs: [lint, test, integration, security, compatibility]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Fetch full history for semantic versioning
+
+      - name: Get latest tag
+        id: get_tag
+        run: |
+          # Get the latest tag, default to v0.0.0 if no tags exist
+          latest_tag=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+          echo "latest_tag=${latest_tag}" >> $GITHUB_OUTPUT
+          echo "Latest tag: ${latest_tag}"
+
+      - name: Determine version bump
+        id: version_bump
+        run: |
+          latest_tag="${{ steps.get_tag.outputs.latest_tag }}"
+
+          # Get commits since last tag
+          if [ "$latest_tag" = "v0.0.0" ]; then
+            commits=$(git log --oneline --pretty=format:"%s")
+          else
+            commits=$(git log ${latest_tag}..HEAD --oneline --pretty=format:"%s")
+          fi
+
+          # Check if there are any commits
+          if [ -z "$commits" ]; then
+            echo "No new commits since ${latest_tag}, skipping release"
+            echo "should_release=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          echo "should_release=true" >> $GITHUB_OUTPUT
+          echo "Commits since ${latest_tag}:"
+          echo "$commits"
+
+          # Determine version bump based on conventional commits
+          major_bump=false
+          minor_bump=false
+          patch_bump=false
+
+          while IFS= read -r commit; do
+            if echo "$commit" | grep -qE "^[a-zA-Z]+(\(.+\))?!:|BREAKING CHANGE"; then
+              major_bump=true
+            elif echo "$commit" | grep -qE "^feat(\(.+\))?:"; then
+              minor_bump=true
+            elif echo "$commit" | grep -qE "^(fix|docs|style|refactor|test|chore)(\(.+\))?:"; then
+              patch_bump=true
+            fi
+          done <<< "$commits"
+
+          # Calculate new version
+          version=$(echo $latest_tag | sed 's/v//')
+          IFS='.' read -ra VERSION_PARTS <<< "$version"
+          major=${VERSION_PARTS[0]:-0}
+          minor=${VERSION_PARTS[1]:-0}
+          patch=${VERSION_PARTS[2]:-0}
+
+          if [ "$major_bump" = true ]; then
+            major=$((major + 1))
+            minor=0
+            patch=0
+            bump_type="major"
+          elif [ "$minor_bump" = true ]; then
+            minor=$((minor + 1))
+            patch=0
+            bump_type="minor"
+          elif [ "$patch_bump" = true ]; then
+            patch=$((patch + 1))
+            bump_type="patch"
+          else
+            # No conventional commits found, default to patch
+            patch=$((patch + 1))
+            bump_type="patch"
+          fi
+
+          new_version="v${major}.${minor}.${patch}"
+          echo "new_version=${new_version}" >> $GITHUB_OUTPUT
+          echo "bump_type=${bump_type}" >> $GITHUB_OUTPUT
+          echo "New version: ${new_version} (${bump_type} bump)"
+
+      - name: Generate release notes
+        id: release_notes
+        if: steps.version_bump.outputs.should_release == 'true'
+        run: |
+          latest_tag="${{ steps.get_tag.outputs.latest_tag }}"
+          new_version="${{ steps.version_bump.outputs.new_version }}"
+          bump_type="${{ steps.version_bump.outputs.bump_type }}"
+
+          # Get commits since last tag for release notes
+          if [ "$latest_tag" = "v0.0.0" ]; then
+            commits=$(git log --oneline --pretty=format:"- %s (%h)")
+          else
+            commits=$(git log ${latest_tag}..HEAD --oneline --pretty=format:"- %s (%h)")
+          fi
+
+          # Create release notes
+          cat > release_notes.md << EOF
+          ## 🚀 Release ${new_version}
+
+          **Release Type:** ${bump_type} release
+
+          ### 📝 Changes
+
+          ${commits}
+
+          ### 📦 Installation
+
+          #### Direct Download
+          \`\`\`bash
+          # Download and install
+          curl -L https://github.com/11gorizont11/git-acc/releases/download/${new_version}/git-acc -o git-acc
+          chmod +x git-acc
+          sudo mv git-acc /usr/local/bin/
+          \`\`\`
+
+          #### From Source
+          \`\`\`bash
+          git clone https://github.com/11gorizont11/git-acc.git
+          cd git-acc
+          make install
+          \`\`\`
+
+          ### ✨ Quick Start
+
+          \`\`\`bash
+          # Add a new Git account
+          git-acc add work "John Doe" "john@company.com"
+
+          # Switch to the account
+          git-acc switch work
+
+          # List all accounts
+          git-acc list
+          \`\`\`
+
+          ### 🔐 Security
+
+          All release artifacts include SHA256 checksums for verification.
+
+          ---
+
+          **Full Changelog**: https://github.com/11gorizont11/git-acc/compare/${latest_tag}...${new_version}
+          EOF
+
+          echo "Release notes generated"
+          cat release_notes.md
+
+      - name: Create and push tag
+        if: steps.version_bump.outputs.should_release == 'true'
+        run: |
+          new_version="${{ steps.version_bump.outputs.new_version }}"
+
+          # Configure git
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Create annotated tag with release notes
+          git tag -a "${new_version}" -F release_notes.md
+
+          # Push the tag
+          git push origin "${new_version}"
+
+          echo "Created and pushed tag: ${new_version}"
+
   release:
     name: Create Release
     runs-on: ubuntu-latest

@@ -407,12 +407,26 @@ cp ~/.gitconfig.bak.20231201_143022 ~/.gitconfig
 
 We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for details.
 
+### 🚀 Automatic Releases
+
+This project uses **automatic semantic versioning** based on [Conventional Commits](CONVENTIONAL_COMMITS.md):
+
+- Every push to `main` automatically creates a new release
+- Version bumps are determined by commit message types:
+  - `feat:` → Minor version (0.1.0 → 0.2.0)
+  - `fix:` → Patch version (0.1.0 → 0.1.1)
+  - `feat!:` → Major version (0.1.0 → 1.0.0)
+- Release notes are generated from commit messages
+
+**📖 [Read the Conventional Commits Guide](CONVENTIONAL_COMMITS.md)** for proper commit formatting.
+
 ### Quick Contribution Guide
 1. Fork the repository
 2. Create a feature branch
 3. Add tests for new functionality
-4. Ensure all tests pass: `make validate`
-5. Submit a pull request
+4. Use conventional commit messages (see [CONVENTIONAL_COMMITS.md](CONVENTIONAL_COMMITS.md))
+5. Ensure all tests pass: `make validate`
+6. Submit a pull request
 
 ## License
 
