@@ -33,6 +33,7 @@ Commands:
   remove <name>     Remove an account by name
   switch <name>     Switch to an account (updates git config)
   status            Show current git identity
+  reset             Reset git config to match active account
   import <file>     Import accounts from JSON file
   export [file]     Export accounts to JSON (stdout if no file)
   config            Show or modify configuration
@@ -452,7 +453,10 @@ cmd_remove() {
         return 2
     fi
 
-    local name="$1"
+    # Join all arguments to handle account names with spaces
+    local name="$*"
+    # Replace newlines with spaces in case arguments were passed without quotes
+    name="${name//$'\n'/ }"
 
     # Check if account exists
     if ! jq -e --arg name "${name}" '.accounts[] | select(.name == $name)' "${ACCOUNTS_FILE}" > /dev/null; then
@@ -469,14 +473,32 @@ cmd_remove() {
         fi
     fi
 
+    # Check if this is the currently active account
+    local current_active
+    current_active=$(jq -r '.active // "none"' "${ACCOUNTS_FILE}")
+    local was_active=0
+    if [[ "${current_active}" == "${name}" ]]; then
+        was_active=1
+    fi
+
     # Remove account
     if [[ ${DRY_RUN} -eq 0 ]]; then
         local temp_file
         temp_file=$(mktemp)
         jq --arg name "${name}" '.accounts = (.accounts | map(select(.name != $name))) | if .active == $name then .active = null else . end' "${ACCOUNTS_FILE}" > "${temp_file}"
         mv "${temp_file}" "${ACCOUNTS_FILE}"
+
+        # If we removed the active account, clear Git config
+        if [[ ${was_active} -eq 1 ]]; then
+            log_info "Clearing Git config (removed active account)"
+            run_command git config --global --unset user.name
+            run_command git config --global --unset user.email
+        fi
     else
         printf "[DRY-RUN] Would remove account: %s\n" "${name}"
+        if [[ ${was_active} -eq 1 ]]; then
+            printf "[DRY-RUN] Would clear Git config (removed active account)\n"
+        fi
     fi
 
     log_info "Account '${name}' removed successfully"
@@ -491,7 +513,10 @@ cmd_switch() {
         return 2
     fi
 
-    local name="$1"
+    # Join all arguments to handle account names with spaces
+    local name="$*"
+    # Replace newlines with spaces in case arguments were passed without quotes
+    name="${name//$'\n'/ }"
 
     # Get account details
     local account_data
@@ -698,6 +723,47 @@ cmd_uninstall() {
     log_info "Uninstalled git-acc from ${install_path}"
 }
 
+cmd_reset() {
+    check_dependencies
+
+    local active_account
+    active_account=$(jq -r '.active // "none"' "${ACCOUNTS_FILE}")
+
+    if [[ "${active_account}" == "none" ]]; then
+        log_info "No active account, clearing Git config"
+        if [[ ${DRY_RUN} -eq 0 ]]; then
+            run_command git config --global --unset user.name
+            run_command git config --global --unset user.email
+        else
+            printf "[DRY-RUN] Would clear Git config\n"
+        fi
+    else
+        log_info "Resetting Git config to match active account: ${active_account}"
+
+        # Get account details
+        local account_data
+        account_data=$(jq --arg name "${active_account}" '.accounts[] | select(.name == $name)' "${ACCOUNTS_FILE}")
+
+        if [[ -z "${account_data}" ]]; then
+            log_error "Active account '${active_account}' not found in accounts file"
+            return 4
+        fi
+
+        local email ssh_key
+        email=$(printf "%s" "${account_data}" | jq -r '.email')
+        ssh_key=$(printf "%s" "${account_data}" | jq -r '.ssh_key // empty')
+
+        # Set git config
+        run_command git config --global user.name "${active_account}"
+        run_command git config --global user.email "${email}"
+
+        log_info "Git config reset to: ${active_account} <${email}>"
+        if [[ -n "${ssh_key}" ]]; then
+            printf "SSH key: %s\n" "${ssh_key}"
+        fi
+    fi
+}
+
 # Command dispatcher
 case "${COMMAND}" in
     list)
@@ -714,6 +780,9 @@ case "${COMMAND}" in
         ;;
     status)
         cmd_status "$@"
+        ;;
+    reset)
+        cmd_reset "$@"
         ;;
     import)
         cmd_import "$@"

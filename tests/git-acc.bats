@@ -536,3 +536,230 @@ EOF
     [[ "${output}" == *"${ssh_key}"* ]]
 }
 
+# Tests for account names with spaces - switch command
+@test "switch works with quoted account names containing spaces" {
+    create_test_account "Test User" "test@example.com"
+
+    run git-acc switch "Test User"
+    [ "${status}" -eq 0 ]
+    [[ "${output}" == *"Switched to account 'Test User'"* ]]
+
+    # Verify git config was updated
+    name=$(git config --global user.name)
+    email=$(git config --global user.email)
+    [ "${name}" = "Test User" ]
+    [ "${email}" = "test@example.com" ]
+}
+
+@test "switch works with unquoted account names containing spaces" {
+    create_test_account "Test User" "test@example.com"
+
+    run git-acc switch Test User
+    [ "${status}" -eq 0 ]
+    [[ "${output}" == *"Switched to account 'Test User'"* ]]
+
+    # Verify git config was updated
+    name=$(git config --global user.name)
+    email=$(git config --global user.email)
+    [ "${name}" = "Test User" ]
+    [ "${email}" = "test@example.com" ]
+}
+
+@test "switch fails with partial account name" {
+    create_test_account "Test User" "test@example.com"
+
+    run git-acc switch Test
+    [ "${status}" -eq 4 ]
+    [[ "${output}" == *"Account 'Test' not found"* ]]
+}
+
+# Tests for account names with spaces - remove command
+@test "remove works with quoted account names containing spaces" {
+    create_test_account "Test User" "test@example.com"
+
+    run git-acc remove "Test User" <<< "y"
+    [ "${status}" -eq 0 ]
+    [[ "${output}" == *"Account 'Test User' removed successfully"* ]]
+
+    # Verify account was removed
+    run git-acc list
+    [[ "${output}" == *"No accounts configured"* ]]
+}
+
+@test "remove works with unquoted account names containing spaces" {
+    create_test_account "Test User" "test@example.com"
+
+    run git-acc remove Test User <<< "y"
+    [ "${status}" -eq 0 ]
+    [[ "${output}" == *"Account 'Test User' removed successfully"* ]]
+
+    # Verify account was removed
+    run git-acc list
+    [[ "${output}" == *"No accounts configured"* ]]
+}
+
+@test "remove fails with partial account name" {
+    create_test_account "Test User" "test@example.com"
+
+    run git-acc remove Test
+    [ "${status}" -eq 4 ]
+    [[ "${output}" == *"Account 'Test' not found"* ]]
+}
+
+# Tests for Git config synchronization when removing active account
+@test "remove active account clears git config" {
+    create_test_account "Test User" "test@example.com"
+    git-acc switch "Test User"
+
+    # Verify account is active
+    run git-acc status
+    [[ "${output}" == *"Active account: Test User"* ]]
+
+    # Remove the active account
+    run git-acc remove "Test User" <<< "y"
+    [ "${status}" -eq 0 ]
+    [[ "${output}" == *"Clearing Git config (removed active account)"* ]]
+    [[ "${output}" == *"Account 'Test User' removed successfully"* ]]
+
+    # Verify git config was cleared
+    run git config --global user.name
+    [ "${status}" -ne 0 ]  # Should fail because config is unset
+
+    run git config --global user.email
+    [ "${status}" -ne 0 ]  # Should fail because config is unset
+
+    # Verify status shows no active account
+    run git-acc status
+    [[ "${output}" == *"Active account: none"* ]]
+    [[ "${output}" == *"Name:  Not set"* ]]
+    [[ "${output}" == *"Email: Not set"* ]]
+}
+
+@test "remove non-active account does not clear git config" {
+    create_test_account "Work Account" "work@example.com"
+    create_test_account "Personal Account" "personal@example.com"
+
+    # Switch to one account
+    git-acc switch "Work Account"
+
+    # Verify account is active
+    run git-acc status
+    [[ "${output}" == *"Active account: Work Account"* ]]
+
+    # Remove the non-active account
+    run git-acc remove "Personal Account" <<< "y"
+    [ "${status}" -eq 0 ]
+    [[ "${output}" == *"Account 'Personal Account' removed successfully"* ]]
+    [[ "${output}" != *"Clearing Git config"* ]]
+
+    # Verify git config was not cleared
+    name=$(git config --global user.name)
+    email=$(git config --global user.email)
+    [ "${name}" = "Work Account" ]
+    [ "${email}" = "work@example.com" ]
+
+    # Verify status still shows active account
+    run git-acc status
+    [[ "${output}" == *"Active account: Work Account"* ]]
+}
+
+# Tests for reset command
+@test "reset clears git config when no active account" {
+    # Set some git config
+    git config --global user.name "Test User"
+    git config --global user.email "test@example.com"
+
+    run git-acc reset
+    [ "${status}" -eq 0 ]
+    [[ "${output}" == *"No active account, clearing Git config"* ]]
+
+    # Verify git config was cleared
+    run git config --global user.name
+    [ "${status}" -ne 0 ]  # Should fail because config is unset
+
+    run git config --global user.email
+    [ "${status}" -ne 0 ]  # Should fail because config is unset
+}
+
+@test "reset syncs git config with active account" {
+    create_test_account "Test User" "test@example.com"
+
+    # Set different git config
+    git config --global user.name "Different User"
+    git config --global user.email "different@example.com"
+
+    # Set account as active but don't switch (simulate inconsistent state)
+    echo '{"accounts": [{"name": "Test User", "email": "test@example.com", "ssh_key": null}], "active": "Test User"}' > "${XDG_CONFIG_HOME}/git-acc/accounts.json"
+
+    run git-acc reset
+    [ "${status}" -eq 0 ]
+    [[ "${output}" == *"Resetting Git config to match active account: Test User"* ]]
+    [[ "${output}" == *"Git config reset to: Test User <test@example.com>"* ]]
+
+    # Verify git config was updated to match active account
+    name=$(git config --global user.name)
+    email=$(git config --global user.email)
+    [ "${name}" = "Test User" ]
+    [ "${email}" = "test@example.com" ]
+}
+
+@test "reset fails when active account not found in accounts file" {
+    # Create inconsistent state - active account that doesn't exist
+    echo '{"accounts": [], "active": "NonExistent"}' > "${XDG_CONFIG_HOME}/git-acc/accounts.json"
+
+    run git-acc reset
+    [ "${status}" -eq 4 ]
+    [[ "${output}" == *"Active account 'NonExistent' not found in accounts file"* ]]
+}
+
+@test "reset --dry-run shows what would be done" {
+    # Set some git config
+    git config --global user.name "Test User"
+    git config --global user.email "test@example.com"
+
+    run git-acc --dry-run reset
+    [ "${status}" -eq 0 ]
+    [[ "${output}" == *"[DRY-RUN] Would clear Git config"* ]]
+
+    # Verify git config wasn't actually cleared
+    name=$(git config --global user.name)
+    email=$(git config --global user.email)
+    [ "${name}" = "Test User" ]
+    [ "${email}" = "test@example.com" ]
+}
+
+# Integration test for the original bug scenario
+@test "integration: switch with spaces works end-to-end" {
+    # Add account with spaces
+    run git-acc add --name "Test User" --email "test@example.com"
+    [ "${status}" -eq 0 ]
+
+    # Switch using unquoted arguments (the original bug)
+    run git-acc switch Test User
+    [ "${status}" -eq 0 ]
+    [[ "${output}" == *"Switched to account 'Test User'"* ]]
+
+    # Verify everything is consistent
+    run git-acc status
+    [[ "${output}" == *"Name:  Test User"* ]]
+    [[ "${output}" == *"Email: test@example.com"* ]]
+    [[ "${output}" == *"Active account: Test User"* ]]
+
+    # Verify git config matches
+    name=$(git config --global user.name)
+    email=$(git config --global user.email)
+    [ "${name}" = "Test User" ]
+    [ "${email}" = "test@example.com" ]
+
+    # Remove using unquoted arguments
+    run git-acc remove Test User <<< "y"
+    [ "${status}" -eq 0 ]
+    [[ "${output}" == *"Clearing Git config (removed active account)"* ]]
+
+    # Verify everything is cleaned up
+    run git-acc status
+    [[ "${output}" == *"Active account: none"* ]]
+    [[ "${output}" == *"Name:  Not set"* ]]
+    [[ "${output}" == *"Email: Not set"* ]]
+}
+

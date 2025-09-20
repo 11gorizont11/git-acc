@@ -112,6 +112,12 @@ git-acc status                  # Human-readable format
 git-acc --json status          # JSON format
 ```
 
+#### `reset` - Reset Git config to match active account
+```bash
+git-acc reset                  # Sync Git config with active account
+git-acc --dry-run reset        # Preview changes
+```
+
 #### `import/export` - Backup and restore accounts
 ```bash
 # Export accounts
@@ -207,6 +213,25 @@ git-acc add
 # Show generated public key
 cat ~/.ssh/id_ed25519_work.pub
 # Copy this to your Git provider (GitHub, GitLab, etc.)
+```
+
+### Account Names with Spaces
+
+Account names can contain spaces and work with both quoted and unquoted syntax:
+
+```bash
+# Add account with spaces
+git-acc add --name "John Doe" --email "john@example.com"
+
+# Switch using quoted syntax
+git-acc switch "John Doe"
+
+# Switch using unquoted syntax (also works!)
+git-acc switch John Doe
+
+# Remove using either syntax
+git-acc remove "John Doe"
+git-acc remove John Doe
 ```
 
 ## Configuration
