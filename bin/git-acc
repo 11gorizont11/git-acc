@@ -344,34 +344,31 @@ cmd_add() {
     fi
 
     # Handle SSH key generation - unified logic for all cases
-    # Always try to prompt for SSH key generation when no SSH key is provided
-    if [[ "${ssh_key}" == "generate" || (-z "${ssh_key}" && ${interactive} -eq 0) ]]; then
-        if [[ "${ssh_key}" == "generate" ]]; then
-            # --ssh flag provided without path, automatically generate
-            log_info "Generating SSH key (--ssh flag provided without path)"
-            generate_key="y"
-        else
-            # No SSH key provided, prompt user
-            log_warn "No SSH key specified. Without an SSH key, you'll need to use HTTPS authentication."
-            read -rp "Generate a new SSH key for this account? (y/N): " generate_key
-        fi
+    if [[ "${ssh_key}" == "generate" ]]; then
+        # --ssh flag provided without path, automatically generate
+        log_info "Generating SSH key (--ssh flag provided without path)"
+        generate_key="y"
+    elif [[ -z "${ssh_key}" && ${interactive} -eq 1 ]]; then
+        # No SSH key provided in interactive mode, prompt user
+        log_warn "No SSH key specified. Without an SSH key, you'll need to use HTTPS authentication."
+        read -rp "Generate a new SSH key for this account? (y/N): " generate_key
+    elif [[ -z "${ssh_key}" ]]; then
+        # No SSH key provided in non-interactive mode, skip generation
+        generate_key="n"
+    else
+        # SSH key path provided, skip generation
+        generate_key="n"
+    fi
 
-        if [[ "${generate_key}" =~ ^[Yy]$ ]]; then
-            ssh_key="${HOME}/.ssh/id_ed25519_$(echo "${name}" | tr '[:upper:]' '[:lower:]')"
-            log_info "Generating SSH key at: ${ssh_key}"
+    if [[ "${generate_key}" =~ ^[Yy]$ ]]; then
+        ssh_key="${HOME}/.ssh/id_ed25519_$(echo "${name}" | tr '[:upper:]' '[:lower:]')"
+        log_info "Generating SSH key at: ${ssh_key}"
 
-            if [[ ${DRY_RUN} -eq 0 ]]; then
-                if [[ -f "${ssh_key}" ]]; then
-                    read -rp "SSH key ${ssh_key} already exists. Overwrite? (y/N): " overwrite
-                    if [[ ! "${overwrite}" =~ ^[Yy]$ ]]; then
-                        log_info "Using existing SSH key: ${ssh_key}"
-                    else
-                        ssh-keygen -t ed25519 -C "${email}" -f "${ssh_key}" -N "" || {
-                            log_error "Failed to generate SSH key"
-                            return 5
-                        }
-                        log_success "SSH key generated successfully!"
-                    fi
+        if [[ ${DRY_RUN} -eq 0 ]]; then
+            if [[ -f "${ssh_key}" ]]; then
+                read -rp "SSH key ${ssh_key} already exists. Overwrite? (y/N): " overwrite
+                if [[ ! "${overwrite}" =~ ^[Yy]$ ]]; then
+                    log_info "Using existing SSH key: ${ssh_key}"
                 else
                     ssh-keygen -t ed25519 -C "${email}" -f "${ssh_key}" -N "" || {
                         log_error "Failed to generate SSH key"
@@ -379,13 +376,22 @@ cmd_add() {
                     }
                     log_success "SSH key generated successfully!"
                 fi
-                log_info "Add the public key to your Git provider:"
-                log_info "  cat ${ssh_key}.pub"
             else
-                log_info "[DRY-RUN] Would generate SSH key: ssh-keygen -t ed25519 -C ${email} -f ${ssh_key} -N \"\""
+                ssh-keygen -t ed25519 -C "${email}" -f "${ssh_key}" -N "" || {
+                    log_error "Failed to generate SSH key"
+                    return 5
+                }
+                log_success "SSH key generated successfully!"
             fi
+            log_info "Add the public key to your Git provider:"
+            log_info "  cat ${ssh_key}.pub"
         else
-            # User declined to generate SSH key
+            log_info "[DRY-RUN] Would generate SSH key: ssh-keygen -t ed25519 -C ${email} -f ${ssh_key} -N \"\""
+        fi
+    else
+        # User declined to generate SSH key or SSH key path was provided
+        # Don't clear ssh_key if it was provided as a path
+        if [[ "${ssh_key}" == "generate" ]]; then
             ssh_key=""
         fi
     fi
@@ -397,7 +403,7 @@ cmd_add() {
     fi
 
     # Validate email format
-    if [[ ! "${email}" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$ ]]; then
+    if ! validate_email "${email}"; then
         log_error "Invalid email format: ${email}"
         return 2
     fi
