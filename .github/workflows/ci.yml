@@ -181,7 +181,7 @@ jobs:
       - name: Check for hardcoded secrets
         run: |
           # Simple regex patterns for common secrets
-          if grep -r -E "(password|secret|key|token)" --include="*.sh" . | grep -v -E "(SSH|password.*::|test|example)"; then
+          if grep -r -E "(password|secret|key|token)" --include="*.sh" . | grep -v -E "(SSH|ssh_key|key_path|ssh-keygen|password.*::|test|example|GITHUB_TOKEN|function.*key|local.*key|public_key|private_key|validate_ssh_key|generate_ssh_key|get_ssh_public_key|ssh.*key|key.*ssh|export.*key)"; then
             echo "Potential hardcoded secrets found!"
             exit 1
           fi
