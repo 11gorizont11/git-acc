@@ -1,3 +1,22 @@
+# [1.0.0](https://github.com/11gorizont11/git-acc/compare/v0.4.0...v1.0.0) (2025-09-24)
+
+
+### Bug Fixes
+
+* ensure dist directory exists before copying artifacts ([01b08bd](https://github.com/11gorizont11/git-acc/commit/01b08bd11805595bc5e90f95031ba9806fc47d28))
+* install npm dependencies in CI for semantic-release plugins ([41a9386](https://github.com/11gorizont11/git-acc/commit/41a9386077ce37219bfb5b91f3e0bfae65ee7d2c))
+
+
+### Features
+
+* enable production semantic-release ([c738bab](https://github.com/11gorizont11/git-acc/commit/c738bab586679e5936c6b9295f9b1d11b5036482))
+* migrate to semantic-release for automated versioning ([a1294a8](https://github.com/11gorizont11/git-acc/commit/a1294a8072d228888454b58fb94aa5f90f003500))
+
+
+### BREAKING CHANGES
+
+* Release process is now fully automated via conventional commits
+
 # Changelog
 
 All notable changes to this project will be documented in this file. See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
