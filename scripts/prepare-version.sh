@@ -58,6 +58,8 @@ fi
 
 # Copy artifacts back to original dist directory
 echo "Copying artifacts back to original dist directory..."
+# Ensure the dist directory exists in the original location
+mkdir -p "${original_dir}/dist"
 cp -f git-acc "${original_dir}/dist/"
 cp -f git-acc.tar.gz "${original_dir}/dist/"
 cp -f git-acc.sha256 "${original_dir}/dist/"
