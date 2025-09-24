@@ -1,0 +1,22 @@
+{
+  "branches": ["main"],
+  "tagFormat": "v${version}",
+  "plugins": [
+    "@semantic-release/commit-analyzer",
+    "@semantic-release/release-notes-generator",
+    ["@semantic-release/changelog", {"changelogFile": "CHANGELOG.md"}],
+    ["@semantic-release/exec", {"prepareCmd": "scripts/prepare-version.sh ${nextRelease.version} && make build && make package && cd dist && sha256sum git-acc > git-acc.sha256 && sha256sum git-acc.tar.gz > git-acc.tar.gz.sha256"}],
+    ["@semantic-release/github", {
+      "assets": [
+        {"path": "dist/git-acc", "label": "git-acc (binary)"},
+        {"path": "dist/git-acc.tar.gz", "label": "git-acc.tar.gz (tarball)"},
+        {"path": "dist/git-acc.sha256", "label": "git-acc.sha256 (checksum)"},
+        {"path": "dist/git-acc.tar.gz.sha256", "label": "git-acc.tar.gz.sha256 (checksum)"}
+      ]
+    }],
+    ["@semantic-release/git", {
+      "assets": ["CHANGELOG.md"],
+      "message": "chore(release): ${nextRelease.version} [skip ci]\n\n${nextRelease.notes}"
+    }]
+  ]
+}

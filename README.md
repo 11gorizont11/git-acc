@@ -459,7 +459,10 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## Changelog
 
-### v0.1.0 (Initial Release)
+See [CHANGELOG.md](CHANGELOG.md) for a detailed history of changes.
+
+### Recent Highlights
+
 - ✅ Account management (add, remove, list, switch)
 - ✅ Git config integration with automatic backups
 - ✅ SSH key association and management
@@ -468,7 +471,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - ✅ Comprehensive dry-run support
 - ✅ Extensive test suite (40+ tests)
 - ✅ Cross-platform compatibility (Linux, macOS)
-- ✅ CI/CD with GitHub Actions
+- ✅ Automated releases with semantic-release
 
 ## Support
 

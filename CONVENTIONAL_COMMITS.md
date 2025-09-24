@@ -135,9 +135,30 @@ git log v0.1.0..HEAD --oneline --pretty=format:"%s"
 ## 🚀 **What Happens After Push**
 
 1. **CI Runs** - All tests and checks pass
-2. **Version Calculated** - Based on commit types
-3. **Release Notes Generated** - From commit messages
-4. **Tag Created** - New semantic version
-5. **Release Published** - GitHub release with artifacts
+2. **Semantic Release Analyzes** - Commits are analyzed for version bump type
+3. **Version Calculated** - Based on commit types using semantic-release
+4. **Release Notes Generated** - From commit messages automatically
+5. **Artifacts Built** - Version injected and packages created
+6. **Tag Created** - New semantic version tag
+7. **Release Published** - GitHub release with artifacts uploaded
+8. **Changelog Updated** - `CHANGELOG.md` automatically updated and committed
+
+## 🔧 **Semantic Release Integration**
+
+This project uses [semantic-release](https://semantic-release.gitbook.io/) for fully automated releases:
+
+- **No manual versioning** - Versions are calculated automatically
+- **No manual tagging** - Git tags are created automatically
+- **No manual releases** - GitHub releases are published automatically
+- **No manual changelog** - `CHANGELOG.md` is updated automatically
+
+### How It Works
+
+1. **Commit Analysis**: semantic-release analyzes your commits since the last release
+2. **Version Calculation**: Determines the next version based on conventional commit types
+3. **Release Generation**: Creates release notes from commit messages
+4. **Artifact Building**: Builds and packages the release with correct version
+5. **GitHub Integration**: Creates tag, release, and uploads artifacts
+6. **Changelog Update**: Updates and commits `CHANGELOG.md`
 
 Your commits directly drive the release process - make them count! 🎉

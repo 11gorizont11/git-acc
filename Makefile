@@ -75,17 +75,23 @@ test-integration: build ## Run integration tests with built distribution
 package: build ## Create release package
 	@echo "Creating release package..."
 	@mkdir -p dist
-	@# Create tarball
-	@tar -czf dist/git-acc-$(VERSION).tar.gz \
-		-C . \
-		--transform 's,^,git-acc-$(VERSION)/,' \
-		bin/ lib/ tests/ README.md LICENSE INSTALL.md CONTRIBUTING.md Makefile
+	@# Create tarball with portable approach
+	@mkdir -p dist/git-acc-$(VERSION)
+	@cp -r bin/ lib/ tests/ README.md LICENSE INSTALL.md CONTRIBUTING.md Makefile dist/git-acc-$(VERSION)/
+	@cd dist && tar -czf git-acc-$(VERSION).tar.gz git-acc-$(VERSION)
+	@rm -rf dist/git-acc-$(VERSION)
 	@# Create standalone script tarball
 	@tar -czf dist/git-acc.tar.gz -C dist git-acc
-	@# Generate checksums
-	@cd dist && sha256sum git-acc > git-acc.sha256
-	@cd dist && sha256sum git-acc-$(VERSION).tar.gz > git-acc-$(VERSION).tar.gz.sha256
-	@cd dist && sha256sum git-acc.tar.gz > git-acc.tar.gz.sha256
+	@# Generate checksums (portable)
+	@cd dist && if command -v sha256sum >/dev/null 2>&1; then \
+		sha256sum git-acc > git-acc.sha256 && \
+		sha256sum git-acc-$(VERSION).tar.gz > git-acc-$(VERSION).tar.gz.sha256 && \
+		sha256sum git-acc.tar.gz > git-acc.tar.gz.sha256; \
+	else \
+		shasum -a 256 git-acc > git-acc.sha256 && \
+		shasum -a 256 git-acc-$(VERSION).tar.gz > git-acc-$(VERSION).tar.gz.sha256 && \
+		shasum -a 256 git-acc.tar.gz > git-acc.tar.gz.sha256; \
+	fi
 	@echo "Package created: dist/git-acc-$(VERSION).tar.gz"
 	@echo "Standalone: dist/git-acc.tar.gz"
 	@echo "Checksums generated"

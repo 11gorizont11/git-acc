@@ -1,0 +1,28 @@
+{
+    "name": "git-acc",
+    "version": "0.1.0",
+    "description": "A lightweight CLI utility for managing multiple Git identities",
+    "private": true,
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/11gorizont11/git-acc.git"
+    },
+    "keywords": [
+        "git",
+        "identity",
+        "cli",
+        "bash",
+        "multiple-accounts"
+    ],
+    "author": "11gorizont11",
+    "license": "MIT",
+    "devDependencies": {
+        "@semantic-release/changelog": "^6.0.3",
+        "@semantic-release/commit-analyzer": "^11.1.0",
+        "@semantic-release/exec": "^6.0.3",
+        "@semantic-release/git": "^10.0.1",
+        "@semantic-release/github": "^9.2.6",
+        "@semantic-release/release-notes-generator": "^12.1.0",
+        "semantic-release": "^22.0.12"
+    }
+}

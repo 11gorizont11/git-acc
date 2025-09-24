@@ -403,40 +403,53 @@ All changes go through review:
 
 ## Release Process
 
+### Automated Releases with Semantic Release
+
+This project uses [semantic-release](https://semantic-release.gitbook.io/) for fully automated versioning and releases. The release process is driven by [Conventional Commits](https://www.conventionalcommits.org/) and requires no manual intervention.
+
+### How It Works
+
+1. **Conventional Commits Drive Releases**: Every commit message follows the conventional commit format
+2. **Automatic Version Calculation**: semantic-release analyzes commits since the last release to determine the next version
+3. **Automatic Release Creation**: When you push to `main`, semantic-release:
+   - Calculates the next version based on commit types
+   - Generates release notes from commit messages
+   - Creates a Git tag
+   - Builds and packages artifacts
+   - Creates a GitHub release with artifacts
+   - Updates the changelog
+
 ### Versioning
 
-We use [Semantic Versioning](https://semver.org/):
+We use [Semantic Versioning](https://semver.org/) with automatic version bumps:
 
-- **MAJOR**: Breaking changes
-- **MINOR**: New features (backward compatible)
-- **PATCH**: Bug fixes (backward compatible)
+- **MAJOR** (1.0.0 → 2.0.0): Breaking changes (`feat!:`, `BREAKING CHANGE:`)
+- **MINOR** (1.0.0 → 1.1.0): New features (`feat:`)
+- **PATCH** (1.0.0 → 1.0.1): Bug fixes (`fix:`, `docs:`, `style:`, `refactor:`, `test:`, `chore:`)
 
-### Release Checklist
+### For Contributors
 
-For maintainers preparing releases:
+**No manual release steps required!** Simply:
 
-1. **Update version**:
-   ```bash
-   # Update VERSION in bin/git-acc
-   sed -i 's/VERSION=".*"/VERSION="1.2.3"/' bin/git-acc
-   ```
+1. **Follow Conventional Commits**: Use proper commit message format
+2. **Push to main**: Releases happen automatically
+3. **Check the changelog**: `CHANGELOG.md` is automatically updated
 
-2. **Update changelog**:
-   - Add new version section to README.md
-   - List new features, fixes, and breaking changes
+### For Maintainers
 
-3. **Test release**:
-   ```bash
-   make release-check
-   ```
+The release process is fully automated, but you can:
 
-4. **Create release**:
-   ```bash
-   git tag v1.2.3
-   git push origin v1.2.3
-   ```
+1. **Monitor releases**: Check GitHub Actions for release status
+2. **Review changelog**: Verify `CHANGELOG.md` is accurate
+3. **Test locally**: Use `make release-check` to validate before pushing
 
-5. **Publish**: GitHub Actions automatically creates release with artifacts
+### Release Artifacts
+
+Each release automatically includes:
+- `git-acc` - Standalone binary
+- `git-acc.tar.gz` - Tarball package
+- `git-acc.sha256` - Binary checksum
+- `git-acc.tar.gz.sha256` - Tarball checksum
 
 ## Getting Help
 
